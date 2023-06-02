@@ -1,0 +1,154 @@
+worker_processes  1;
+error_log /Users/liborpichler/Projects/resty_project/error.log debug;
+events {
+    worker_connections 1024;
+}
+
+http {
+    server {
+        listen 9999;
+        access_log              /Users/liborpichler/Projects/resty_project/access.log;
+
+        location / {
+            default_type text/html;
+
+
+            access_by_lua_block {
+                local redis = require "resty.redis"
+                local red = redis:new()
+
+                red:set_timeouts(1000, 1000, 1000)
+
+                local ok, err = red:connect("127.0.0.1", 6379)
+
+                if not ok then
+                    ngx.say("failed to connect: ", err)
+                    return
+                end
+
+                local res, err = red:select(1) -- Change the number to the desired database number
+                if not res then
+                    ngx.say("failed to select db: ", err)
+                    return
+                end
+                local args = ngx.req.get_uri_args()
+
+                for key, val in pairs(args) do
+                    if type(val) == "table" then
+                        ngx.say(key, ": ", table.concat(val, ", "))
+                    else
+                        ngx.say(key, ": ", val)
+                    end
+                end
+
+                local headers = ngx.req.get_headers()
+
+                for k, v in pairs(headers) do
+                    if type(v) == "table" then
+                        ngx.say(k, "= ", table.concat(v, ', '))
+                    else
+                        ngx.say(k, "= ", v)
+                    end
+                end
+
+                local ngx_encode_base64 = ngx.encode_base64
+                local ngx_decode_base64 = ngx.decode_base64
+
+
+                -- Get all headers
+                local headers = ngx.req.get_headers()
+
+                -- Access the "x-rh-identity" header
+                local identity_header = headers["x-rh-identity"]
+
+                if not identity_header then
+                    ngx.say("x-rh-identity header not found")
+                    return
+                end
+
+                -- Base64 decode
+                local decoded = ngx_decode_base64(identity_header)
+
+                if not decoded then
+                    ngx.say("failed to decode base64")
+                    return
+                end
+
+
+                local cjson = require "cjson"
+
+                local json_obj = cjson.decode(decoded)
+                ngx.say(decoded)
+                ngx.say(json_obj.identity.user.username)
+
+                local resty_sha1 = require "resty.sha1"
+
+                local sha1 = resty_sha1:new()
+                if not sha1 then
+                    ngx.say("failed to create the sha1 object")
+                    return
+                end
+
+
+                local query_string = ngx.encode_args(args)
+
+                local ok = sha1:update(query_string)
+                if not ok then
+                    ngx.say("failed to add data")
+                    return
+                end
+
+                local digest = sha1:final()
+
+                local str = require "resty.string"
+
+                local hash_key = "rbac::policy::tenant=" .. json_obj.identity.org_id .. "::param=" .. str.to_hex(digest)
+
+                local res, err = red:hget(hash_key, "inventory")
+                if not res then
+                    ngx.say("failed to get hash: ", err)
+                    return
+                end
+
+                if not( res == ngx.null ) then
+                    ngx.say(res)
+                    return
+                end
+
+            }
+
+            proxy_pass http://localhost:8080;
+
+            body_filter_by_lua_block {
+                -- Lua code here to manipulate the response body
+                local resp_body = ngx.arg[1]
+
+                local redis = require "resty.redis"
+                local red = redis:new()
+
+                red:set_timeouts(1000, 1000, 1000)
+
+                local ok, err = red:connect("127.0.0.1", 6379)
+
+                if not ok then
+                    ngx.say("failed to connect: ", err)
+                    return
+                end
+
+                local res, err = red:select(1) -- Change the number to the desired database number
+                if not res then
+                    ngx.say("failed to select db: ", err)
+                    return
+                end
+
+                ok, err = red:hset("dog", "name", resp_body)
+                if not ok then
+                    ngx.say("failed to set hash: ", err)
+                    return
+                end
+
+            }
+        }
+    }
+
+}
