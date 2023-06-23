@@ -15,13 +15,13 @@ function _M.new(host, port)
     local ok, err = red:connect(host, port)
     if not ok then
         ngx.say("failed to connect: ", err)
-        return
+        return nil
     end
 
     local res, err = red:select(1)
     if not res then
         ngx.say("failed to select db: ", err)
-        return
+        return nil
     end
 
     self.client = red

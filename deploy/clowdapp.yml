@@ -1,0 +1,73 @@
+---
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: rbac
+objects:
+- apiVersion: cloud.redhat.com/v1alpha1
+  kind: ClowdApp
+  metadata:
+    name: proxy-cache-server
+  spec:
+    envName: ${ENV_NAME}
+    inMemoryDb: true
+    deployments:
+    - name: worker-service
+      minReplicas: ${{MIN_WORKER_REPLICAS}}
+      metadata:
+        annotations:
+          ignore-check.kube-linter.io/minimum-three-replicas: "dont need 3 replicas - runs background processes from turnpike/weekly tasks"
+      podSpec:
+        image: ${IMAGE}:${IMAGE_TAG}
+        resources:
+          limits:
+            cpu: ${CPU_LIMIT}
+            memory: ${CPU_LIMIT}
+          requests:
+            cpu: ${CPU_REQUEST}
+            memory: ${CPU_REQUEST}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: rbac
+    labels:
+      app: rbac
+      pod: proxy-cache-server
+  spec:
+    ports:
+    - port: 9999
+      protocol: TCP
+      targetPort: 9999
+      name: weblegacy
+    selector:
+      pod: proxy-cache-server
+
+parameters:
+- description: Image name
+  name: IMAGE_TAG
+  value: latest
+- description: Image name
+  name: IMAGE
+  value: quay.io/repository/lpichler/proxy-cache-server
+- description: Determines Clowder deployment
+  name: CLOWDER_ENABLED
+  value: "true"
+- description: ClowdEnv Name
+  name: ENV_NAME
+  required: true
+- description: Initial amount of memory
+  displayName: Memory Request
+  name: MEMORY_REQUEST
+  value: 512Mi
+- description: Maximum amount of memory
+  displayName: Memory Limit
+  name: MEMORY_LIMIT
+  value: 1Gi
+- description: Initial amount of cpu
+  displayName: CPU Request
+  name: CPU_REQUEST
+  value: 200m
+- description: Maximum amount of cpu
+  displayName: CPU Limit
+  name: CPU_LIMIT
+  value: 700m
