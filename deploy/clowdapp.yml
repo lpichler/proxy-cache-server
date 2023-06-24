@@ -13,7 +13,7 @@ objects:
     inMemoryDb: true
     deployments:
     - name: worker-service
-      minReplicas: ${{MIN_WORKER_REPLICAS}}
+      minReplicas: ${{MIN_REPLICAS}}
       metadata:
         annotations:
           ignore-check.kube-linter.io/minimum-three-replicas: "dont need 3 replicas - runs background processes from turnpike/weekly tasks"
@@ -43,6 +43,9 @@ objects:
       pod: proxy-cache-server
 
 parameters:
+- description: MIN_REPLICAS
+  name: MIN_REPLICAS
+  value: '1'
 - description: Image name
   name: IMAGE_TAG
   value: latest
