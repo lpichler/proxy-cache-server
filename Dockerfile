@@ -1,61 +1,100 @@
-# Use the Official OpenResty Docker image
-FROM openresty/openresty:latest
-USER root
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.7-1107 AS base
 
-# Set the working directory
-WORKDIR /usr/local/openresty/nginx
+ARG OPENRESTY_RPM_VERSION="1.19.3"
+
+LABEL summary="The 3scale API gateway (APIcast) is an OpenResty application, which consists of two parts: NGINX configuration and Lua files." \
+      description="APIcast is not a standalone API gateway therefore it needs connection to the 3scale API management platform. The container includes OpenResty and uses LuaRocks to install dependencies (rocks are installed in the application folder)." \
+      io.k8s.description="APIcast is not a standalone API gateway therefore it needs connection to the 3scale API management platform. The container includes OpenResty and uses LuaRocks to install dependencies (rocks are installed in the application folder)." \
+      io.k8s.display-name="3scale API gateway (APIcast)" \
+      io.openshift.expose-services="8080:apicast" \
+      io.openshift.tags="integration, nginx, lua, openresty, api, gateway, 3scale, rhamp" \
+      maintainer="3scale-engineering@redhat.com"
+
+# Labels consumed by Red Hat build service
+LABEL com.redhat.component="3scale-amp-apicast-gateway-container" \
+      name="3scale-amp2/apicast-gateway-rhel8" \
+    version="1.22.0"\
+      maintainer="3scale-engineering@redhat.com"
+
+WORKDIR /tmp
+
+ENV AUTO_UPDATE_INTERVAL=0 \
+    # The $HOME is not set by default, but some applications needs this variable
+    HOME=/opt/app-root/src \
+    PATH=/opt/app-root/src/bin:/opt/app-root/bin:$PATH \
+    PLATFORM="el8"
+
+RUN microdnf update
+
+RUN microdnf install -y 'yum-utils'
+
+RUN yum-config-manager --add-repo http://packages.dev.3sca.net/dev_packages_3sca_net.repo
+
+RUN PKGS="perl-interpreter-5.26.3 libyaml-devel-0.1.7 m4 openssl-devel git gcc make curl tar openresty-resty-${OPENRESTY_RPM_VERSION} luarocks-2.3.0 opentracing-cpp-devel-1.3.0 libopentracing-cpp1-1.3.0 jaegertracing-cpp-client openresty-opentracing-${OPENRESTY_RPM_VERSION}" && \
+    mkdir -p "$HOME" && \
+    microdnf -y --setopt=tsflags=nodocs install $PKGS && \
+    rpm -V $PKGS && \
+    microdnf clean all -y
+
+COPY site_config.lua /usr/share/lua/5.1/luarocks/site_config.lua
+COPY config-*.lua /usr/local/openresty/config-5.1.lua
+
+ENV PATH="./lua_modules/bin:/usr/local/openresty/luajit/bin/:${PATH}" \
+    LUA_PATH="./lua_modules/share/lua/5.1/?.lua;./lua_modules/share/lua/5.1/?/init.lua;/usr/lib64/lua/5.1/?.lua;/usr/share/lua/5.1/?.lua" \
+    LUA_CPATH="./lua_modules/lib/lua/5.1/?.so;;" \
+    LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/app-root/lib"
+
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/pintsized/lua-resty-http-0.15-0.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/kikito/router-2.1-0.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/kikito/inspect-3.1.1-0.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/cdbattags/lua-resty-jwt-0.2.0-0.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/lua-resty-url-0.3.5-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/lua-resty-env-0.4.0-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/liquid-0.2.0-2.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/tieske/date-2.2-2.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/tieske/penlight-1.7.0-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/mpeterv/argparse-0.6.0-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/lua-resty-execvp-0.1.1-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/luafilesystem-ffi-0.2.0-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/3scale/lua-resty-jit-uuid-0.0.7-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/knyar/nginx-lua-prometheus-0.20181120-2.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/hamish/lua-resty-iputils-0.3.0-1.src.rock
+RUN luarocks install --deps-mode=none --tree /usr/local https://luarocks.org/manifests/golgote/net-url-0.9-1.src.rock
+
+RUN microdnf -y remove yum-utils libyaml-devel m4 openssl-devel perl-Git-* git annobin-* gcc-plugin-annobin-* gcc luarocks && \
+    rm -rf /var/cache/yum && microdnf clean all -y && \
+    rm -rf ./*
+
+COPY gateway/. /opt/app-root/src/
+
+RUN mkdir -p /opt/app-root/src/logs && \
+    useradd -u 1001 -r -g 0 -d ${HOME} -s /sbin/nologin -c "Default Application User" default && \
+    rm -r /usr/local/openresty/nginx/logs && \
+    ln -s /opt/app-root/src/logs /usr/local/openresty/nginx/logs && \
+    ln -s /dev/stdout /opt/app-root/src/logs/access.log && \
+    ln -s /dev/stderr /opt/app-root/src/logs/error.log && \
+    mkdir -p /usr/local/share/lua/ && \
+    chmod g+w /usr/local/share/lua/ && \
+    mkdir -p /usr/local/openresty/nginx/{client_body_temp,fastcgi_temp,proxy_temp,scgi_temp,uwsgi_temp} && \
+    chown -R 1001:0 /opt/app-root /usr/local/share/lua/ /usr/local/openresty/nginx/{client_body_temp,fastcgi_temp,proxy_temp,scgi_temp,uwsgi_temp}
+
+RUN ln --verbose --symbolic /opt/app-root/src/bin /opt/app-root/bin && \
+    ln --verbose --symbolic /opt/app-root/src/http.d /opt/app-root/http.d && \
+    ln --verbose --symbolic --force /etc/ssl/certs/ca-bundle.crt "/opt/app-root/src/conf" && \
+    chmod --verbose g+w "${HOME}" "${HOME}"/* "${HOME}/http.d" && \
+    chown -R 1001:0 /opt/app-root
+
+RUN ln --verbose --symbolic /opt/app-root/src /opt/app-root/app && \
+    ln --verbose --symbolic /opt/app-root/bin /opt/app-root/scripts
+
+WORKDIR /opt/app-root/app
+
+USER 1001
+
+ENV LUA_CPATH "./?.so;/usr/lib64/lua/5.1/?.so;/usr/lib64/lua/5.1/loadall.so;/usr/local/lib64/lua/5.1/?.so"
+ENV LUA_PATH "/usr/lib64/lua/5.1/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/*/?.lua;"
+
+WORKDIR /opt/app-root
 
 
-RUN groupadd nginx && useradd -r -g nginx nginx
-
-# Remove default configuration
-RUN rm -v conf/nginx.conf
-
-# Update package lists
-RUN apt-get update
-
-# Install curl
-RUN apt-get install -y curl
-
-# Copy your OpenResty configuration and application into the Docker image
-COPY conf/nginx.conf conf/nginx.conf
-RUN mkdir src
-COPY src/*.lua src/
-
-RUN mkdir -p /usr/local/openresty/nginx/client_body_temp && chown -R nginx:nginx /usr/local/openresty/nginx
-RUN mkdir -p /usr/local/openresty/nginx/proxy_temp && chown -R nginx:nginx /usr/local/openresty/nginx/proxy_temp
-
-RUN mkdir -p /usr/local/openresty/nginx/proxy_temp && \
-    chown -R nginx:nginx /usr/local/openresty/nginx && \
-    chmod -R 755 /usr/local/openresty/nginx
-
-RUN mkdir -p /usr/local/openresty/nginx/fastcgi_temp && \
-    chown -R nginx:nginx /usr/local/openresty/nginx && \
-    chmod -R 755 /usr/local/openresty/nginx
-
-RUN mkdir -p /usr/local/openresty/nginx/uwsgi_temp && \
-    chown -R nginx:nginx /usr/local/openresty/nginx && \
-    chmod -R 755 /usr/local/openresty/nginx
-
-RUN mkdir -p /usr/local/openresty/nginx/scgi_temp && \
-    chown -R nginx:nginx /usr/local/openresty/nginx && \
-    chmod -R 755 /usr/local/openresty/nginx
-
-RUN mkdir -p /usr/local/openresty/nginx/scgi_temp && \
-    chown -R nginx:nginx /usr/local/openresty/nginx && \
-    chmod -R 755 /usr/local/openresty/nginx
-RUN touch /usr/local/openresty/nginx/./error.log
-RUN touch /usr/local/openresty/nginx/./access.log
-
-RUN chown root:root /usr/local/openresty/nginx/./error.log
-RUN chown root:root /usr/local/openresty/nginx/./access.log
-RUN chown 755 /usr/local/openresty/nginx/./error.log
-RUN chown 755 /usr/local/openresty/nginx/./access.log
-
-
-# Expose port
-EXPOSE 9999
-
-
-# Start the OpenResty server
 CMD ["openresty", "-g", "daemon off;"]
