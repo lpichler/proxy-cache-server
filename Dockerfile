@@ -37,7 +37,7 @@ RUN PKGS="perl-interpreter-5.26.3 libyaml-devel-0.1.7 m4 openssl-devel git gcc m
     microdnf clean all -y
 
 COPY site_config.lua /usr/share/lua/5.1/luarocks/site_config.lua
-COPY config-*.lua /usr/local/openresty/config-5.1.lua
+#COPY config-*.lua /usr/local/openresty/config-5.1.lua
 
 ENV PATH="./lua_modules/bin:/usr/local/openresty/luajit/bin/:${PATH}" \
     LUA_PATH="./lua_modules/share/lua/5.1/?.lua;./lua_modules/share/lua/5.1/?/init.lua;/usr/lib64/lua/5.1/?.lua;/usr/share/lua/5.1/?.lua" \
@@ -65,7 +65,12 @@ RUN microdnf -y remove yum-utils libyaml-devel m4 openssl-devel perl-Git-* git a
     rm -rf /var/cache/yum && microdnf clean all -y && \
     rm -rf ./*
 
-COPY gateway/. /opt/app-root/src/
+
+COPY conf/nginx.conf conf/nginx.conf
+
+RUN mkdir src
+COPY src/*.lua src/
+
 
 RUN mkdir -p /opt/app-root/src/logs && \
     useradd -u 1001 -r -g 0 -d ${HOME} -s /sbin/nologin -c "Default Application User" default && \
@@ -78,23 +83,40 @@ RUN mkdir -p /opt/app-root/src/logs && \
     mkdir -p /usr/local/openresty/nginx/{client_body_temp,fastcgi_temp,proxy_temp,scgi_temp,uwsgi_temp} && \
     chown -R 1001:0 /opt/app-root /usr/local/share/lua/ /usr/local/openresty/nginx/{client_body_temp,fastcgi_temp,proxy_temp,scgi_temp,uwsgi_temp}
 
-RUN ln --verbose --symbolic /opt/app-root/src/bin /opt/app-root/bin && \
-    ln --verbose --symbolic /opt/app-root/src/http.d /opt/app-root/http.d && \
-    ln --verbose --symbolic --force /etc/ssl/certs/ca-bundle.crt "/opt/app-root/src/conf" && \
-    chmod --verbose g+w "${HOME}" "${HOME}"/* "${HOME}/http.d" && \
-    chown -R 1001:0 /opt/app-root
+#RUN ln --verbose --symbolic /opt/app-root/src/bin /opt/app-root/bin && \
+#    ln --verbose --symbolic /opt/app-root/src/http.d /opt/app-root/http.d && \
+#    ln --verbose --symbolic --force /etc/ssl/certs/ca-bundle.crt "/opt/app-root/src/conf" && \
+#    chmod --verbose g+w "${HOME}" "${HOME}"/* "${HOME}/http.d" && \
+#    chown -R 1001:0 /opt/app-root
 
-RUN ln --verbose --symbolic /opt/app-root/src /opt/app-root/app && \
-    ln --verbose --symbolic /opt/app-root/bin /opt/app-root/scripts
+#RUN ln --verbose --symbolic /opt/app-root/src /opt/app-root/app && \
+#    ln --verbose --symbolic /opt/app-root/bin /opt/app-root/scripts
 
 WORKDIR /opt/app-root/app
 
-USER 1001
+USER root
 
 ENV LUA_CPATH "./?.so;/usr/lib64/lua/5.1/?.so;/usr/lib64/lua/5.1/loadall.so;/usr/local/lib64/lua/5.1/?.so"
 ENV LUA_PATH "/usr/lib64/lua/5.1/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/*/?.lua;"
 
 WORKDIR /opt/app-root
+EXPOSE 9999
 
 
-CMD ["openresty", "-g", "daemon off;"]
+WORKDIR /usr/local/openresty/nginx
+
+COPY conf/nginx.conf conf/nginx.conf
+RUN mkdir src
+COPY src/*.lua src/
+
+
+RUN mkdir -p /usr/local/openresty/nginx/logs
+RUN chown -R 1001:1001 /usr/local/openresty/nginx
+RUN chmod -R 755 /usr/local/openresty/nginx
+
+
+
+USER 1001
+
+ENTRYPOINT ["bash"]
+#CMD ["openresty", "-g", "daemon off;"]
